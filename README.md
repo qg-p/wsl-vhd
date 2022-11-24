@@ -4,10 +4,12 @@ Manage Virtual Hard Disk from Windows Subsystem for Linux
 
 # Usage
 
-`wsl-vhd mount path/to/file.vhdx [mount point]`
-`wsl-vhd umount path/to/file.vhdx`
-`wsl-vhd umount-all`
-`wsl-vhd status`
+``` bash
+wsl-vhd mount path/to/file.vhdx [mount point]
+wsl-vhd umount path/to/file.vhdx
+wsl-vhd umount-all
+wsl-vhd status
+```
 
 # Requirement
 
