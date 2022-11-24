@@ -1,0 +1,266 @@
+#!/bin/bash
+#
+# export $MAP in a file:
+# mount a Microsoft-Virtual-Hard-Disk file on or unmount it from the wsl and the host system.
+#
+# Y.Lin <y.lin@mail.nwpu.edu.cn>
+# 2022/11/23
+#
+### BEGIN INIT INFO
+# Provides:             wsl-vhd
+# Required-Start:       $local_fs $all
+# Required-Stop:
+# Default-Start:        S
+# Default-Stop:         0 1 6
+# Short-Description:    WSL Virtual Hard Disk management
+# Description: Mount a VHD (aka. Microsoft Virtual Hard Disk file.vhd/.vhdx)
+#              on or unmount it from the wsl (Windows Subsystem of Linux) and the host system.
+#              Requires Windows PowerShell Hyper-V management cmdlet
+#              (Get/Mount/Dismount-VHD -Path ...) enabled.
+### END INIT INFO
+
+VHD_PREFIX="PHYSICALDRIVE" # pHYsiCaldrIVe, etc.
+LOGFILE=/tmp/wsl_vhd.log
+ENVFILE=/mnt/wsl/mount.info
+
+#[ -x powershell.exe ] || ( echo >&2 "$0: powershell.exe: Not found." ; exit 0 )
+
+form_script() {
+	inner_bash_cmd_list=( "$(readlink -f $0)" "_" "${@:1}" )
+	inner_bash_cmd=""
+	for cmd in "${inner_bash_cmd_list[@]}"; do
+		inner_bash_cmd+="\\\"$cmd\\\" "
+	done
+	inner_bash_cmd+="2\>/proc/\$\$/fd/2 1\>/proc/\$\$/fd/1"
+#	unset inner_bash_cmd_list
+
+	ps_cmd="\&{Start-Process wsl -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList \'-d Ubuntu -- $inner_bash_cmd\'}"
+#	unset inner_bash_cmd
+	bash_cmd="powershell.exe -NoProfile $ps_cmd"
+#	unset ps_cmd
+	echo "$bash_cmd"
+#	unset $bash_cmd
+}
+
+mount-vhd() {
+	if [ ! -f "$1" ]; then
+		echo >&2 "\"$1\" is not a file"; exit -1
+	fi
+	VHD_PATH=$(wslpath -m $1) # <relative>/path/to/Ubuntu.vhdx -> Disk:/absolute/path/to/Ubuntu.vhdx
+	if [ "//wsl" == "${VHD_PATH:0:5}" ]; then # not being a windows file, "//wsl.localhost/Ubuntu/**"
+		echo >&2 "Warning: \"$1\" <$VHD_PATH> may be a virtual file"
+	fi
+	if [ ! -x "$ENVFILE" ]; then
+		declare -A MAP # <local> MAP: dictionary
+		declare -p MAP > "$ENVFILE"
+		chmod 555 "$ENVFILE"
+	fi
+	. "$ENVFILE" # "declare -A MAP=(...)", unpack.
+	if [ ${MAP[$VHD_PATH]+_} ]; then # if MAP[VHD_PATH] is not None # which is not '!=false'
+		echo >&2 "MAP[$VHD_PATH]==\"${MAP[$VHD_PATH]}\""; return 1
+	fi
+# form instr
+	bash_cmd=( "_Admin_mount \\\\\\\"$VHD_PATH\\\\\\\"" )
+###	bash_cmd=("_Admin_mount \\\\\\\"$VHD_PATH\\\\\\\"" "sleep 10")
+	bash_cmd=$(form_script "${bash_cmd[@]}")
+	PHYSICAL_DRIVE=$(bash -c "$bash_cmd")
+	unset bash_cmd
+
+	if [ -z "$PHYSICAL_DRIVE" ]; then
+		echo >&2 "Fail to mount VHD \"$VHD_PATH\""; return 1
+	fi
+	MAP+=( ["$VHD_PATH"]="$PHYSICAL_DRIVE" ) # update MAP
+	chmod +200 "$ENVFILE"
+	declare -p MAP > "$ENVFILE"
+	chmod -200 "$ENVFILE"
+	return 0
+}
+
+# RunAs Administrator: mount-vhd, get-vhd, wsl --mount
+# usage: _Admin_mount C:/path/to/file.vhdx
+# output: write "PHYSICALDRIVEx" to stdout if success, else none.
+_Admin_mount() {
+	VHD_PATH="$1"
+#	echo >&2 -n "====== bash (Administrator) output ======
+	echo >&2 -n "VHD path=\"$VHD_PATH\"
+Get-VHD..."
+	diskno=$(powershell.exe -NoProfile -NonInteractive -Command \
+		"(Get-VHD -Path \"$VHD_PATH\").Number")
+	diskno="${diskno%?}"
+	if [ -z "$diskno" ]; then
+		echo >&2 -n "Mount-VHD..."
+		diskno=$(powershell.exe -NoProfile -NonInteractive -Command \
+			"(Mount-VHD -Path \"$VHD_PATH\" -Passthru).Number")
+		diskno="${diskno%?}"
+		echo >&2 "Done"
+	fi
+	if [ -z "$diskno" ]; then
+		echo >&2 "Cannot mount VHD: \"$VHD_PATH\""; return 1
+	fi
+	PHYSICAL_DRIVE="$VHD_PREFIX$diskno"
+	echo >&2 "Disk Number=$diskno
+wsl.exe --mount \\\\.\\$PHYSICAL_DRIVE"
+# cause halt if directly write stderr
+	result=$({ wsl.exe --mount "\\\\.\\$PHYSICAL_DRIVE" >&2; echo -n $?; } 2> >(iconv -f unicode -t utf-8 >&2));
+	if ((result)); then return $result; fi
+	echo -n "$PHYSICAL_DRIVE" # retv
+	return 0
+}
+
+unmount-vhd() {
+	if [ ! -x "$ENVFILE" ]; then
+		echo >&2 "Cannot access association file \"$ENVFILE\" as an executable script"; return 1
+	fi
+	. "$ENVFILE" # unpack
+	if [ ! "${MAP[$VHD_PATH]+_}" ]; then
+		echo >&2 "MAP\[$VHD_PATH\] is None"; return 1
+	fi
+
+	if [ ! -f "$1" ]; then
+		echo >&2 "\"$1\" is not a file"; return -1
+	fi
+	VHD_PATH=$(wslpath -m $1)
+	PHYSICAL_DRIVE="${MAP[$VHD_PATH]}"
+# form instr
+	bash_cmd=( "_Admin_unmount \\\\\\\"$VHD_PATH\\\\\\\" \\\\\\\"$PHYSICAL_DRIVE\\\\\\\"" )
+	bash_cmd=$(form_script "${bash_cmd[@]}")
+	result=$(bash -c "$bash_cmd")
+	unset bash_cmd
+
+	if [ -z "$result" ]; then
+		echo "Canceled."; return 0
+	fi
+	if ((result<1)); then
+		echo >&2 "wsl --unmount failed"; return 1;
+	fi
+	for key in "${!MAP[@]}"; do # unregister all pair from MAP whose value equals to ${MAP[$VHD_PATH]}
+		if [ "${MAP[$key]}" == "$PHYSICAL_DRIVE" ]; then
+			unset MAP["$key"]
+		fi
+	done
+	chmod +200 "$ENVFILE"
+	declare -p MAP > "$ENVFILE"
+	chmod -200 "$ENVFILE"
+	return 0
+}
+
+# RunAs Administrator: dismount-vhd, wsl --unmount
+# usage: _Admin_unmount C:/path/to/file.vhdx PHYSICALDRIVEx
+# output: output the number (0 1 2) of success command.
+_Admin_unmount() {
+	VHD_PATH=$1
+	PHYSICAL_DRIVE=$2
+	n=0
+#	echo >&2 -n "====== bash (Administrator) output ======"
+	echo >&2 "sync"
+	sync # !!! IMPORTANT !!!
+	echo >&2 "wsl.exe --unmount \\\\.\\$PHYSICAL_DRIVE"
+	result=$({ wsl.exe --unmount "\\\\.\\$PHYSICAL_DRIVE" >&2; echo -n $?; } 2> >(iconv -f unicode -t utf-8 >&2));
+	if ((result)); then
+		echo $n; return $result
+	fi
+	((n++))
+	echo >&2 -n "Dismount-VHD \"$VHD_PATH\"..."
+# cause halt if directly write stderr
+	result=$({ powershell.exe -NoProfile -Command "Dismount-VHD -Path \"$VHD_PATH\"" >&2; echo -n $?; } 2> >(cat >&2));
+	if ((result)); then
+		echo $n; return $result
+	fi
+	((n++))
+	echo >&2 "Done"
+	echo $n
+	return 0
+}
+
+unmount-vhd_all() {
+	if [ ! -x "$ENVFILE" ]; then
+		echo >&2 "Cannot access \"$ENVFILE\""
+		declare -A MAP
+	else
+		. "$ENVFILE" # unpack
+	fi
+
+	if (( !${#MAP[@]} )); then
+		echo >&2 "Nothing to do"
+		return 0
+	fi
+
+	declare -A RMAP
+	for VHD_PATH in "${!MAP[@]}"; do
+		PHYSICAL_DRIVE="${MAP[$VHD_PATH]}"
+		RMAP["$PHYSICAL_DRIVE"]="$VHD_PATH" # filter
+		unset MAP["$VHD_PATH"]
+	done
+# form instr
+	bash_cmd_list=()
+	for PHYSICAL_DRIVE in "${!RMAP[@]}"; do
+		VHD_PATH="${RMAP[$PHYSICAL_DRIVE]}"
+		bash_cmd_list+=( "_Admin_unmount \\\\\\\"$VHD_PATH\\\\\\\" \\\\\\\"$PHYSICAL_DRIVE\\\\\\\"" )
+	done
+	bash_cmd=$(form_script "${bash_cmd_list[@]}")
+	result=$(bash -c "$bash_cmd")
+	unset bash_cmd
+
+	if [ -z "$result" ]; then
+		echo "Canceled."; return 0
+	fi
+
+	chmod +200 "$ENVFILE"
+	declare -p MAP > "$ENVFILE"
+	chmod -200 "$ENVFILE"
+	return 0
+}
+
+case "$1" in
+_)
+#	for cmd in "${@:2}"; do echo >&2 "> $cmd" done
+	for cmd in "${@:2}"; do
+#		echo >&2 "> $cmd"
+		eval "$cmd"
+	done
+	RETVAL=0
+	;;
+mount)
+	if [ -z "$2" ]; then
+		$0 usage
+	else
+		echo "[$$] $(date) Start $@" >> "$LOGFILE"
+		mount-vhd "$2" 2> >(tee >&2 -a "$LOGFILE")
+		echo "[$$] $(date) End" >> "$LOGFILE"
+	fi
+	RETVAL=$?
+	;;
+umount)
+	if [ -z "$2" ]; then
+		$0 usage
+	else
+		echo "[$$] $(date) Start $@" >> "$LOGFILE"
+		unmount-vhd "$2" 2> >(tee >&2 -a "$LOGFILE")
+		echo "[$$] $(date) End" >> "$LOGFILE"
+	fi
+	RETVAL=$?
+	;;
+umount-all)
+	echo "[$$] $(date) Start $@" >> "$LOGFILE"
+	unmount-vhd_all 2> >(tee >&2 -a "$LOGFILE")
+	echo "[$$] $(date) End" >> "$LOGFILE"
+	;;
+status)
+	if [ -x "$ENVFILE" ]; then
+		. "$ENVFILE"
+	else
+		declare -A MAP
+	fi
+	echo "${#MAP[@]} record(s)"
+	for key in "${!MAP[@]}"; do
+		echo "${MAP[$key]}	$key"
+	done
+	;;
+usage | help | *)
+	echo >&2 "Usage:
+	$0 {mount|umount} /path/to/file.vhdx
+	$0 {umount-all|status|usage}"
+	RETVAL=1
+esac
+
+exit $RETVAL
