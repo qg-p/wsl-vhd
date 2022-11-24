@@ -24,7 +24,7 @@ PHYSICAL_DRIVE_DIRECTORY=/mnt/wsl
 LOGFILE=/tmp/wsl_vhd.log
 ENVFILE=/mnt/wsl/mount.info
 
-#[ -x powershell.exe ] || ( echo >&2 "$0: powershell.exe: Not found." ; exit 0 )
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/c/Windows/System32/WindowsPowerShell/v1.0:/mnt/c/Windows/System32"
 
 form_script() {
 	inner_bash_cmd_list=( "$(readlink -f $0)" "_" "${@:1}" )
@@ -81,6 +81,7 @@ mount-vhd() {
 	bash_cmd=( "_Admin_mount \\\\\\\"$VHD_PATH\\\\\\\"" )
 ###	bash_cmd=("_Admin_mount \\\\\\\"$VHD_PATH\\\\\\\"" "sleep 10")
 	bash_cmd=$(form_script "${bash_cmd[@]}")
+	export PATH
 	PHYSICAL_DRIVE=$(bash -c "$bash_cmd")
 	unset bash_cmd
 
@@ -152,6 +153,7 @@ unmount-vhd() {
 # form instr
 	bash_cmd=( "_Admin_unmount \\\\\\\"$VHD_PATH\\\\\\\" \\\\\\\"$PHYSICAL_DRIVE\\\\\\\"" )
 	bash_cmd=$(form_script "${bash_cmd[@]}")
+	export PATH
 	result=$(bash -c "$bash_cmd")
 	unset bash_cmd
 
@@ -237,6 +239,7 @@ unmount-vhd_all() {
 		bash_cmd_list+=( "_Admin_unmount \\\\\\\"$VHD_PATH\\\\\\\" \\\\\\\"$PHYSICAL_DRIVE\\\\\\\"" )
 	done
 	bash_cmd=$(form_script "${bash_cmd_list[@]}")
+	export PATH
 	result=$(bash -c "$bash_cmd")
 	unset bash_cmd
 
@@ -268,9 +271,9 @@ mount)
 	if [ -z "$2" ]; then
 		$0 usage
 	else
-		echo "[$$] $(date) Start $@" >> "$LOGFILE"
+		echo "[$$] $(date +"%Y/%m/%d-%T.%N") Start $@" >> "$LOGFILE"
 		mount-vhd "${@:2}" 2> >(tee >&2 -a "$LOGFILE")
-		echo "[$$] $(date) End" >> "$LOGFILE"
+		echo "[$$] $(date +"%Y/%m/%d-%T.%N") End" >> "$LOGFILE"
 	fi
 	RETVAL=$?
 	;;
@@ -278,16 +281,16 @@ umount)
 	if [ -z "$2" ]; then
 		$0 usage
 	else
-		echo "[$$] $(date) Start $@" >> "$LOGFILE"
+		echo "[$$] $(date +"%Y/%m/%d-%T.%N") Start $@" >> "$LOGFILE"
 		unmount-vhd "${@:2}" 2> >(tee >&2 -a "$LOGFILE")
-		echo "[$$] $(date) End" >> "$LOGFILE"
+		echo "[$$] $(date +"%Y/%m/%d-%T.%N") End" >> "$LOGFILE"
 	fi
 	RETVAL=$?
 	;;
 umount-all)
-	echo "[$$] $(date) Start $@" >> "$LOGFILE"
+	echo "[$$] $(date +"%Y/%m/%d-%T.%N") Start $@" >> "$LOGFILE"
 	unmount-vhd_all "${@:2}" 2> >(tee >&2 -a "$LOGFILE")
-	echo "[$$] $(date) End" >> "$LOGFILE"
+	echo "[$$] $(date +"%Y/%m/%d-%T.%N") End" >> "$LOGFILE"
 	;;
 status)
 	if [ -x "$ENVFILE" ]; then
