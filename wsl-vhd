@@ -37,7 +37,7 @@ form_script() {
 
 	ps_cmd="\&{Start-Process wsl -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList \'-d Ubuntu -- $inner_bash_cmd\'}"
 #	unset inner_bash_cmd
-	bash_cmd="powershell.exe -NoProfile $ps_cmd"
+	bash_cmd="exec powershell.exe -NoProfile $ps_cmd"
 #	unset ps_cmd
 	echo "$bash_cmd"
 #	unset $bash_cmd
@@ -55,14 +55,12 @@ mount-vhd() {
 		echo >&2 "\"$VHD_PATH\" is not a file"; return -1
 	fi
 	VHD_PATH=$(wslpath -m "$VHD_PATH") # [relative]/path/to/Ubuntu.vhdx -> Disk:/absolute/path/to/Ubuntu.vhdx
+	BIND_DIRECTORY=""
 	if [ "$2" ]; then
 		BIND_DIRECTORY=$(abs_path "$2")
 		if [ ! -d "$BIND_DIRECTORY" ]; then
 			echo >&2 "\"$BIND_DIRECTORY\" is not a directory"; return -1
 		fi
-		BIND_DIRECTORY=$(readlink -f $BIND_DIRECTORY)
-	else
-		BIND_DIRECTORY=""
 	fi
 
 	if [ "//wsl" == "${VHD_PATH:0:5}" ]; then # not being a windows file, "//wsl.localhost/Ubuntu/**"
@@ -71,7 +69,7 @@ mount-vhd() {
 	if [ ! -x "$ENVFILE" ]; then
 		declare -A MAP=() # <local> MAP: dictionary
 		declare -p MAP > "$ENVFILE"
-		chmod 555 "$ENVFILE"
+		chmod 755 "$ENVFILE"
 	fi
 	. "$ENVFILE" # "declare -A MAP=(...)", unpack.
 	if [ ${MAP[$VHD_PATH]+_} ]; then # if MAP[VHD_PATH] is not None # which is not '!=false'
@@ -97,9 +95,9 @@ mount-vhd() {
 	fi
 	MAP+=( ["$VHD_PATH"]="$(declare -p INFO | awk '{match($0,"=\\(");print substr($0,RSTART+1)}')" ) # update MAP
 #####################################################
-	chmod +200 "$ENVFILE"
+#	chmod +200 "$ENVFILE"
 	declare -p MAP > "$ENVFILE"
-	chmod -200 "$ENVFILE"
+#	chmod -200 "$ENVFILE"
 	return 0
 }
 
@@ -174,9 +172,9 @@ unmount-vhd() {
 			unset MAP["$key"]
 		fi
 	done
-	chmod +200 "$ENVFILE"
+#	chmod +200 "$ENVFILE"
 	declare -p MAP > "$ENVFILE"
-	chmod -200 "$ENVFILE"
+#	chmod -200 "$ENVFILE"
 	return 0
 }
 
@@ -252,9 +250,9 @@ unmount-vhd_all() {
 		umount "$BIND_DIRECTORY"
 	done
 
-	chmod +200 "$ENVFILE"
+#	chmod +200 "$ENVFILE"
 	declare -p MAP > "$ENVFILE"
-	chmod -200 "$ENVFILE"
+#	chmod -200 "$ENVFILE"
 	return 0
 }
 
@@ -271,6 +269,7 @@ mount)
 	if [ -z "$2" ]; then
 		$0 usage
 	else
+		[ "${FLOCKER}" != "$0" ] && exec env FLOCKER="$0" flock -xF "$0" "$0" "$@"
 		echo "[$$] $(date +"%Y/%m/%d-%T.%N") Start $@" >> "$LOGFILE"
 		mount-vhd "${@:2}" 2> >(tee >&2 -a "$LOGFILE")
 		echo "[$$] $(date +"%Y/%m/%d-%T.%N") End" >> "$LOGFILE"
@@ -281,6 +280,7 @@ umount)
 	if [ -z "$2" ]; then
 		$0 usage
 	else
+		[ "${FLOCKER}" != "$0" ] && exec env FLOCKER="$0" flock -xF "$0" "$0" "$@"
 		echo "[$$] $(date +"%Y/%m/%d-%T.%N") Start $@" >> "$LOGFILE"
 		unmount-vhd "${@:2}" 2> >(tee >&2 -a "$LOGFILE")
 		echo "[$$] $(date +"%Y/%m/%d-%T.%N") End" >> "$LOGFILE"
@@ -288,6 +288,7 @@ umount)
 	RETVAL=$?
 	;;
 umount-all)
+	[ "${FLOCKER}" != "$0" ] && exec env FLOCKER="$0" flock -xF "$0" "$0" "$@"
 	echo "[$$] $(date +"%Y/%m/%d-%T.%N") Start $@" >> "$LOGFILE"
 	unmount-vhd_all "${@:2}" 2> >(tee >&2 -a "$LOGFILE")
 	echo "[$$] $(date +"%Y/%m/%d-%T.%N") End" >> "$LOGFILE"
